@@ -457,6 +457,16 @@ def dump_file_payload(filename: Optional[str], payload: str):
     is_flag=True,
     help="Disables progress bars.",
 )
+@click.option(
+    "--persist-timing",
+    default=None,
+    help=(
+        "A filename to persist the timing information for a linting run to "
+        "in csv format for external analysis. NOTE: This feature should be "
+        "treated as beta, and the format of the csv file may change in "
+        "future releases without warning."
+    ),
+)
 @click.argument("paths", nargs=-1, type=click.Path(allow_dash=True))
 def lint(
     paths: Tuple[str],
@@ -471,6 +481,7 @@ def lint(
     disable_progress_bar: Optional[bool] = False,
     extra_config_path: Optional[str] = None,
     ignore_local_config: bool = False,
+    persist_timing: Optional[str] = None,
     **kwargs,
 ) -> None:
     """Lint SQL files via passing a list of files or using stdin.
@@ -585,6 +596,9 @@ def lint(
 
     if file_output:
         dump_file_payload(write_output, cast(str, file_output))
+
+    if persist_timing:
+        result.persist_timing_records(persist_timing)
 
     output_stream.close()
     if bench:
