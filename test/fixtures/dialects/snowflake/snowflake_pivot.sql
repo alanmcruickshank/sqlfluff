@@ -1,4 +1,4 @@
--- NB This is a pivot expression With and Alias. The alias should be parsed seperately to the pivot.
+-- NB This is a pivot expression with an alias. The alias should be parsed separately from the pivot.
 SELECT * FROM my_tbl
 PIVOT (min(f_val) FOR f_id IN (1, 2)) AS f (a, b);
 
