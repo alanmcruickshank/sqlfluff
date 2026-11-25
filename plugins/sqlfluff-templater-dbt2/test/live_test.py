@@ -1,5 +1,6 @@
 """Opt-in end-to-end validation against an installed dbt#16870 runtime build."""
 
+import json
 import logging
 import os
 import shutil
@@ -205,6 +206,10 @@ def test_live_review_regressions_fix_only_executed_source(tmp_path, monkeypatch)
             "{% for n in [1, 2, 3] if n > 3 %}select {{ n }};{% endfor %}select 0\n",
             "{% for n in [1, 2, 3] if n > 3 %}select {{ n }};{% endfor %}SELECT 0\n",
         ),
+        "repeated_empty_body": (
+            "{% for n in [1, 2, 3] %}{% endfor %}select 1\n",
+            "{% for n in [1, 2, 3] %}{% endfor %}SELECT 1\n",
+        ),
         "continued": (
             "{% for n in [1, 2] %}{% if n > 0 %}select {{ n }};{% continue %}{% endif %}{% endfor %}select 9\n",
             "{% for n in [1, 2] %}{% if n > 0 %}SELECT {{ n }};{% continue %}{% endif %}{% endfor %}SELECT 9\n",
@@ -261,6 +266,38 @@ def test_live_review_regressions_fix_only_executed_source(tmp_path, monkeypatch)
             file.path
         )
         assert file.fix_string()[0] == cases[Path(file.path).stem][1]
+
+
+def test_live_nested_loop_indentation_stabilizes(tmp_path, monkeypatch):
+    """Recompile the saved LT02 fix before checking that a second pass is a no-op."""
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
+    fixtures = Path(__file__).parent / "fixtures"
+    first, second = json.loads(
+        (fixtures / "loop_indentation.json").read_text(encoding="utf-8")
+    )["nested"]
+    project = tmp_path / "project"
+    shutil.copytree(fixtures / "project", project)
+    model = project / "models/probe.sql"
+    config = FluffConfig(
+        configs={
+            "core": {
+                "dialect": "duckdb",
+                "templater": "dbt2",
+                "rules": "LT02",
+                "use_rust_parser": False,
+            },
+            "templater": {
+                "dbt2": {"project_dir": str(project), "profiles_dir": str(project)}
+            },
+        }
+    )
+    source = first["source"]
+    for should_change in (True, False):
+        model.write_text(source, encoding="utf-8", newline="")
+        result = Linter(config=config).lint_string(source, fname=str(model), fix=True)
+        assert not result.get_violations(types=(SQLTemplaterError, SQLParseError))
+        source, changed = result.fix_string()
+        assert (source, changed) == (second["source"], should_change)
 
 
 def test_live_public_parquet_contract(tmp_path, monkeypatch):

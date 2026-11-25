@@ -80,10 +80,29 @@ def _raw_slices(source: str, env: Environment) -> list[RawFileSlice]:
     return result
 
 
-def _validate_blocks(sliced: list[TemplatedFileSlice]) -> None:
-    """Reject invalid layout before it can underflow the lexer's block stack."""
+def _normalize_blocks(sliced: list[TemplatedFileSlice]) -> list[TemplatedFileSlice]:
+    """Validate block nesting and translate iteration boundaries for the lexer."""
+    result: list[TemplatedFileSlice] = []
     depth = 0
-    for item in sliced:
+    for idx, item in enumerate(sliced):
+        if item.slice_type == "loop_iteration":
+            close = sliced[idx - 1] if idx else None
+            if (
+                close is None
+                or close.slice_type != "block_end"
+                or close.templated_slice != item.templated_slice
+                or item.templated_slice.start != item.templated_slice.stop
+                or close.source_slice.start < item.source_slice.stop
+                or idx + 1 == len(sliced)
+            ):
+                raise ValueError("loop_iteration without a matching iteration boundary")
+            # Keep the endfor if the lexer can recognise a backward jump to
+            # the next body slice. An empty body can jump straight to the same
+            # endfor, in which case there is no lexer boundary to emit.
+            if sliced[idx + 1].source_slice.start >= close.source_slice.start:
+                result.pop()
+            depth += 1  # The close and repeat leave the logical nesting unchanged.
+            continue
         if item.slice_type == "block_start":
             depth += 1
         elif item.slice_type == "block_end":
@@ -93,8 +112,10 @@ def _validate_blocks(sliced: list[TemplatedFileSlice]) -> None:
                     f"{item.source_slice.start}; update the dbt trace exporter"
                 )
             depth -= 1
+        result.append(item)
     if depth:
         raise ValueError("unclosed Jinja blocks in dbt trace")
+    return result
 
 
 def _protect_unrendered_tail(
@@ -244,9 +265,7 @@ def _convert_trace(trace: dict[str, Any], source: str, fname: str) -> TemplatedF
         fill_gap(dst.start)
         if src.start > source_cursor:
             omitted(src.start)
-        if kind == "loop_iteration":
-            kind = "block_start"
-        elif kind == "loop_skipped":
+        if kind == "loop_skipped":
             # Empty recursive invocations share their parent's source tag;
             # the explicit closing event cannot be inferred from source gaps.
             kind = "block_end"
@@ -266,7 +285,7 @@ def _convert_trace(trace: dict[str, Any], source: str, fname: str) -> TemplatedF
         omitted(len(source))
     if not sliced:
         sliced = [TemplatedFileSlice("literal", slice(0, 0), slice(0, 0))]
-    _validate_blocks(sliced)
+    sliced = _normalize_blocks(sliced)
     return Dbt2TemplatedFile(
         source_str=source,
         fname=fname,
