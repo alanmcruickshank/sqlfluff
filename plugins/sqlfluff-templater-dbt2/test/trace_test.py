@@ -86,6 +86,20 @@ def test_repeated_source(traces):
     assert len({item.templated_slice.start for item in repeated}) == 3
 
 
+def test_iteration_without_preceding_endfor_is_rejected(traces):
+    """An iteration marker cannot open a block independently."""
+    trace = traces["loop"]
+    iteration = next(
+        index
+        for index, event in enumerate(trace["events"])
+        if event["kind"] == "loop_iteration"
+    )
+    assert trace["events"][iteration - 1]["kind"] == "block_end"
+    del trace["events"][iteration - 1]
+    with pytest.raises(SQLTemplaterError, match="matching iteration boundary"):
+        trace_to_templated_file(trace, trace["source"], "model.sql")
+
+
 @pytest.mark.parametrize(
     "mutation",
     ["source", "protocol", "producer", "stage", "literal", "offset", "gap", "kind"],

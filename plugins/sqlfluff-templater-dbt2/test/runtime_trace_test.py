@@ -8,7 +8,7 @@ from sqlfluff_templater_dbt2.templater import Dbt2Templater
 from sqlfluff_templater_dbt2.trace import normalize_newlines
 
 from sqlfluff.core import FluffConfig, Linter
-from sqlfluff.core.errors import SQLTemplaterError
+from sqlfluff.core.errors import SQLParseError, SQLTemplaterError
 
 
 def make_config(**settings):
@@ -25,6 +25,35 @@ def make_config(**settings):
             "rules": {"capitalisation.keywords": {"capitalisation_policy": "upper"}},
         }
     )
+
+
+@pytest.mark.parametrize(
+    "case", ["nested", "no_inner_conditional", "no_outer_conditional"]
+)
+def test_nested_loop_indentation_stabilizes(case, traces, monkeypatch):
+    """Run the original and fixed source against separately recorded renders."""
+    # Captured by https://github.com/dataders/sqlfluff-dbt2-indent-repro.
+    first, second = json.loads(
+        (Path(__file__).parent / "fixtures/loop_indentation.json").read_text(
+            encoding="utf-8"
+        )
+    )[case]
+    config = FluffConfig(
+        overrides={
+            "dialect": "snowflake",
+            "templater": "dbt2",
+            "rules": "LT02",
+            "use_rust_parser": False,
+        }
+    )
+    for recorded, should_change in ((first, True), (second, False)):
+        trace = {**traces["literal"], **recorded, "protocol_version": 2}
+        monkeypatch.setattr(Dbt2Templater, "_runtime", lambda *_, trace=trace: trace)
+        result = Linter(config=config).lint_string(
+            recorded["source"], fname="model.sql", fix=True
+        )
+        assert not result.get_violations(types=(SQLTemplaterError, SQLParseError))
+        assert result.fix_string() == (second["source"], should_change)
 
 
 @pytest.mark.parametrize(
